@@ -52,16 +52,22 @@ def detect_kind(path: str, data: bytes) -> str:
 
 def read_text(data: bytes) -> str:
     """Decode a text file, rejecting binary files."""
-    if b"\x00" in data[:8192]:
-        raise UnsupportedFileError("This looks like a binary file. Use get_file_download_link to download it instead.")
-    for encoding in ("utf-8-sig", "utf-16"):
+    binary = UnsupportedFileError("This looks like a binary file. Use get_file_download_link to download it instead.")
+    # UTF-16 is only detectable by its BOM: without one, almost any even-length
+    # bytes "decode" as UTF-16. Check it before the null-byte test, since
+    # UTF-16 text is full of null bytes.
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
         try:
-            text = data.decode(encoding)
-            break
+            text = data.decode("utf-16")
         except UnicodeDecodeError:
-            continue
+            raise binary
+    elif b"\x00" in data[:8192]:
+        raise binary
     else:
-        text = data.decode("latin-1")
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = data.decode("latin-1")
     return truncate(text, "Use get_file_download_link to get the full file.")
 
 
