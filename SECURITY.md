@@ -22,19 +22,29 @@ This MCP server requires a Seafile API token for authentication. Please be aware
 - **Rotate tokens periodically** - generate new tokens and revoke old ones
 - **Use scoped tokens** if your Seafile server supports them (limits access to specific libraries)
 
-### Local Execution Risks
+### Local Mode (stdio) Risks
 
-This MCP server runs locally on your machine. Be aware that:
+In local mode this MCP server runs on your machine. Be aware that:
 
 - The server has access to whatever the Seafile API token allows
 - MCP clients (like Claude Desktop) can invoke any tool exposed by this server
 - Review tool descriptions to understand what operations are possible
 
+### Hosted Mode (HTTP) Risks
+
+In hosted mode the server is reachable over the network. Be aware that:
+
+- Each client sends its own Seafile token with every request; the server forwards it to Seafile and does not store or log it
+- The server never uses a token of its own (`SEAFILE_TOKEN` is ignored), so unauthenticated requests cannot access any data
+- Users must trust the operator of a hosted server, since their token passes through it
+- Always put the server behind HTTPS (reverse proxy) and set `MCP_ALLOWED_HOSTS` to enable Host/Origin header checks
+- The Docker setup binds to `127.0.0.1` by default so only your reverse proxy can reach it
+
 ### Network Security
 
-- All communication with your Seafile server uses HTTPS
-- The server does not expose any network ports (uses stdio transport)
-- Credentials are loaded from environment variables, not passed via command line
+- Use HTTPS for your Seafile server and, in hosted mode, for the MCP server
+- In local mode the server does not expose any network ports (uses stdio transport)
+- Credentials are loaded from environment variables or request headers, not passed via command line
 
 ### Best Practices
 

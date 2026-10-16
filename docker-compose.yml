@@ -1,0 +1,14 @@
+services:
+  seafile-mcp:
+    build: .
+    image: seafile-mcp:latest
+    container_name: seafile-mcp
+    restart: unless-stopped
+    environment:
+      # The Seafile server this MCP talks to
+      SEAFILE_URL: ${SEAFILE_URL:?Set SEAFILE_URL in .env or the environment}
+      # Public hostname(s) of this MCP server, comma-separated (recommended)
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+    ports:
+      # Bound to localhost: put a reverse proxy (Caddy, nginx, Traefik) in front for HTTPS
+      - "127.0.0.1:${MCP_PORT:-8000}:8000"

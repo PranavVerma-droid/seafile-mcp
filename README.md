@@ -31,11 +31,11 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that c
 
 ### Why This MCP Server?
 
-- **Direct connection** - Connects straight to your Seafile server, no middleman
+- **Direct connection** - Connects straight to your Seafile server, no third-party service
 - **Privacy-first** - Your data never leaves your infrastructure
 - **Free & open source** - No subscriptions, no vendor lock-in
 - **Full control** - Inspect, modify, and extend the code as needed
-- **Self-hosted** - Runs locally alongside your self-hosted Seafile
+- **Run it your way** - Locally on your machine, or hosted once for your whole team
 
 ---
 
@@ -76,60 +76,23 @@ Once set up, you can ask Claude things like:
 
 ---
 
-## Prerequisites
+## Two Ways to Run It
 
-Before you start, make sure you have:
+| | **Local (stdio)** | **Hosted (HTTP)** |
+|---|---|---|
+| **Where it runs** | On each user's machine, launched by their MCP client | Once, on your server (Docker) |
+| **Who it's for** | Just you | You, your family, or your team |
+| **Token lives in** | Your local `.env` file | Each user's MCP client config |
+| **Seafile URL set by** | Your local `.env` file | The server operator (`SEAFILE_URL`) |
+| **Users need to install** | Python and this repo | Nothing, just a URL and their token |
 
-- **Python 3.10 or higher** - Check with `python3 --version`
-- **A Seafile server** - Either self-hosted or a Seafile cloud account
-- **Claude Desktop app** or **Claude Code CLI** - Where you'll use this MCP server
+In hosted mode, every user sends **their own** Seafile token. The server forwards it to Seafile, so everyone only sees what their own Seafile account allows. The server never uses a token of its own.
 
 ---
 
-## Installation
+## Step 1: Get Your Seafile API Token
 
-### Step 1: Clone or Download This Repository
-
-```bash
-# Option A: Clone with git
-git clone https://github.com/setugk/seafile-mcp.git
-cd seafile-mcp
-
-# Option B: Or download and extract the ZIP, then cd into it
-```
-
-### Step 2: Create a Virtual Environment
-
-A virtual environment keeps this project's dependencies isolated from your system Python.
-
-```bash
-# Create the virtual environment
-python3 -m venv venv
-
-# Activate it
-# On macOS/Linux:
-source venv/bin/activate
-
-# On Windows:
-venv\Scripts\activate
-```
-
-You should see `(venv)` at the start of your terminal prompt. This means the virtual environment is active.
-
-### Step 3: Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-This installs:
-- `mcp` - The Model Context Protocol library
-- `httpx` - For making HTTP requests to Seafile
-- `python-dotenv` - For loading configuration from `.env`
-
-### Step 4: Get Your Seafile API Token
-
-You need an API token to authenticate with your Seafile server.
+Both modes need a Seafile API token.
 
 #### Option A: Using the Seafile Web Interface
 
@@ -152,106 +115,157 @@ Replace:
 
 The response will look like:
 ```json
-{"token": "a]1b2c3d4e5f6g7h8i9j0..."}
+{"token": "a1b2c3d4e5f6g7h8i9j0..."}
 ```
 
 Copy the token value (without quotes).
 
-### Step 5: Configure Your Credentials
+---
+
+## Option A: Local Mode (stdio)
+
+### Prerequisites
+
+- **Python 3.10 or higher** - Check with `python3 --version`
+- **Claude Desktop app** or **Claude Code CLI**
+
+### Install
 
 ```bash
-# Copy the example config
-cp .env.example .env
+git clone https://github.com/setugk/seafile-mcp.git
+cd seafile-mcp
 
-# Edit .env with your favorite editor
-nano .env   # or vim, code, etc.
+python3 -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+
+pip install -r requirements.txt
 ```
 
-Fill in your values:
+### Configure
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set:
 
 ```
 SEAFILE_URL=https://your-seafile-server.com
 SEAFILE_TOKEN=your-api-token-here
 ```
 
-**Important:**
 - No trailing slash on the URL
 - No quotes around values
 - Keep this file secret (it's already in `.gitignore`)
 
-### Step 6: Test the Server
+### Connect to Claude
+
+**Claude Code:**
 
 ```bash
-python src/server.py
+claude mcp add seafile -- /FULL/PATH/TO/seafile-mcp/venv/bin/python /FULL/PATH/TO/seafile-mcp/src/server.py
 ```
 
-If everything is set up correctly, the server will start without errors. Press `Ctrl+C` to stop it.
+**Claude Desktop:** open `Claude` menu → `Settings` → `Developer` → `Edit Config` and add:
+
+```json
+{
+  "mcpServers": {
+    "seafile": {
+      "command": "/FULL/PATH/TO/seafile-mcp/venv/bin/python",
+      "args": ["/FULL/PATH/TO/seafile-mcp/src/server.py"]
+    }
+  }
+}
+```
+
+Replace `/FULL/PATH/TO/` with the absolute path to this repo. On Windows the Python path is `C:\\path\\to\\seafile-mcp\\venv\\Scripts\\python.exe`. Then fully quit and reopen Claude Desktop.
+
+**Test it:** ask Claude to "List my Seafile libraries".
 
 ---
 
-## Connecting to Claude
+## Option B: Hosted Mode (HTTP + Docker)
 
-Choose the method that matches how you use Claude:
+Run one server that anyone with an account on your Seafile can connect to by URL.
 
-### Option A: Claude Desktop App
+### Prerequisites
 
-1. **Find your Claude Desktop config file:**
+- A server with **Docker** and **Docker Compose**
+- A domain for the MCP server (e.g. `files-mcp.example.com`)
+- A reverse proxy for HTTPS (Caddy, nginx, Traefik, Cloudflare Tunnel, ...)
 
-   - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+### Deploy
 
-   Or in Claude Desktop: `Claude` menu → `Settings` → `Developer` → `Edit Config`
+```bash
+git clone https://github.com/setugk/seafile-mcp.git
+cd seafile-mcp
+```
 
-2. **Add the MCP server configuration:**
+Create a `.env` file next to `docker-compose.yml`:
 
-   If the file is empty or doesn't exist, create it with:
+```
+SEAFILE_URL=https://files.example.com
+MCP_ALLOWED_HOSTS=files-mcp.example.com
+```
 
-   ```json
-   {
-     "mcpServers": {
-       "seafile": {
-         "command": "/FULL/PATH/TO/seafile-mcp/venv/bin/python",
-         "args": ["/FULL/PATH/TO/seafile-mcp/src/server.py"]
-       }
-     }
-   }
-   ```
+Start it:
 
-   If you already have other MCP servers, add `seafile` inside the existing `mcpServers` object.
+```bash
+docker compose up -d --build
+curl http://127.0.0.1:8000/health    # {"status":"ok"}
+```
 
-   **Important:** Replace `/FULL/PATH/TO/` with the actual absolute path to where you cloned this repo.
+The container listens on `127.0.0.1:8000`, so it is only reachable through your reverse proxy. For example, with Caddy:
 
-   Example paths:
-   - macOS: `/Users/yourname/projects/seafile-mcp/venv/bin/python`
-   - Windows: `C:\\Users\\yourname\\projects\\seafile-mcp\\venv\\Scripts\\python.exe`
+```
+files-mcp.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
 
-3. **Restart Claude Desktop completely:**
-   - Quit Claude Desktop (Cmd+Q on Mac, Alt+F4 on Windows)
-   - Reopen Claude Desktop
+The MCP endpoint is then `https://files-mcp.example.com/mcp`.
 
-4. **Verify it works:**
-   - Start a new conversation
-   - Look for the hammer/tools icon - "seafile" should be listed
-   - Ask: "Use the hello tool" or "List my Seafile libraries"
+**Without Compose:**
 
-### Option B: Claude Code (CLI)
+```bash
+docker build -t seafile-mcp .
+docker run -d --name seafile-mcp --restart unless-stopped \
+  -p 127.0.0.1:8000:8000 \
+  -e SEAFILE_URL=https://files.example.com \
+  -e MCP_ALLOWED_HOSTS=files-mcp.example.com \
+  seafile-mcp
+```
 
-1. **Create a `.mcp.json` file** in your project directory:
+**Without Docker:**
 
-   ```json
-   {
-     "mcpServers": {
-       "seafile": {
-         "command": "/FULL/PATH/TO/seafile-mcp/venv/bin/python",
-         "args": ["/FULL/PATH/TO/seafile-mcp/src/server.py"]
-       }
-     }
-   }
-   ```
+```bash
+SEAFILE_URL=https://files.example.com python src/server.py --transport http --host 127.0.0.1 --port 8000
+```
 
-2. **Start Claude Code** in that directory - it will automatically load the MCP server.
+### Connect to Claude
 
-3. **Test with:** "List my Seafile libraries"
+Each user adds the server with **their own** Seafile token:
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport http seafile https://files-mcp.example.com/mcp \
+  --header "Authorization: Bearer YOUR_SEAFILE_TOKEN"
+```
+
+**Other MCP clients:** use the Streamable HTTP transport with URL `https://files-mcp.example.com/mcp` and the header `Authorization: Bearer YOUR_SEAFILE_TOKEN`.
+
+### Configuration Reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SEAFILE_URL` | *(required)* | Your Seafile server URL, no trailing slash |
+| `SEAFILE_TOKEN` | | Local mode only. **Ignored in hosted mode.** |
+| `MCP_TRANSPORT` | `stdio` (`http` in Docker) | `stdio` or `http`. Also `--transport` |
+| `MCP_HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Bind address. Also `--host` |
+| `MCP_PORT` | `8000` | Port. Also `--port` |
+| `MCP_ALLOWED_HOSTS` | | Comma-separated public hostnames. Enables Host/Origin checks (DNS rebinding protection). Recommended in production |
 
 ---
 
@@ -289,35 +303,46 @@ Once connected, Claude has access to these tools:
 - Make sure you fully restarted Claude Desktop (not just closed the window)
 - Check for JSON syntax errors in your config file (missing commas, brackets)
 
-### "SEAFILE_URL or SEAFILE_TOKEN not configured"
+### "SEAFILE_TOKEN is not configured" (local mode)
 
 - Make sure you created the `.env` file (not just `.env.example`)
 - Make sure the `.env` file is in the project root directory (same folder as `src/`)
 - Check there are no extra spaces or quotes in your `.env` values
 
+### "Missing Seafile token" (hosted mode)
+
+- Your MCP client isn't sending the token. Check the `Authorization: Bearer YOUR_SEAFILE_TOKEN` header in your client config
+
+### "Seafile rejected the token" or "401 Unauthorized"
+
+- Your API token may have expired - generate a new one
+- Make sure you copied the full token with no extra spaces
+- In hosted mode, make sure your token is for the same Seafile server the MCP server points at
+
 ### "Connection error: Could not reach server"
 
 - Verify your Seafile server URL is correct and accessible
 - Try opening the URL in a browser
-- Check if your server requires VPN access
+- In hosted mode, the MCP server itself must be able to reach Seafile. Test with `docker exec seafile-mcp python -c "import urllib.request; print(urllib.request.urlopen('https://files.example.com').status)"`
 
-### "Authentication failed" or "401 Unauthorized"
+### "421 Misdirected Request" or "Invalid Host header" (hosted mode)
 
-- Your API token may have expired - generate a new one
-- Make sure you copied the full token with no extra spaces
+- `MCP_ALLOWED_HOSTS` doesn't match the hostname clients connect to, or your reverse proxy isn't passing the original `Host` header
 
-### "Module not found" errors
+### "Module not found" errors (local mode)
 
 - Make sure you're using the Python from the virtual environment in your config
-- Run `venv/bin/pip list` to verify `mcp` and `httpx` are installed
+- Run `venv/bin/pip install -r requirements.txt` again. This project needs `mcp` 2.x
 
 ### Check server logs
 
-Run the server manually to see any errors:
-
 ```bash
+# Local mode
 source venv/bin/activate
 python src/server.py
+
+# Hosted mode
+docker compose logs -f
 ```
 
 ---
@@ -364,11 +389,19 @@ The MCP server allows Claude to:
 
 **Be careful with destructive commands.** Consider using a read-only API token if your Seafile server supports scoped permissions.
 
-### Local Machine Security
+### Local Mode
 
 - The MCP server runs locally with your user permissions
 - Anyone with access to your machine could read your `.env` file
 - Use standard device security (lock screen, disk encryption)
+
+### Hosted Mode
+
+- **Always serve it over HTTPS.** Tokens are sent with every request
+- **Users trust the operator.** Each user's token passes through the MCP server. The server doesn't store or log tokens, but users should only connect to servers they trust
+- **The server has no token of its own.** Requests without a valid Seafile token can't do anything, so the endpoint can be public
+- **Tokens are full-access.** A Seafile API token can do everything the account can, including deleting libraries
+- **Set `MCP_ALLOWED_HOSTS`** to enable Host/Origin header checks
 
 **Reporting vulnerabilities:** See [SECURITY.md](SECURITY.md) for responsible disclosure guidelines.
 
@@ -396,5 +429,5 @@ MIT License - See LICENSE file for details.
 
 ## Acknowledgments
 
-- Built with [FastMCP](https://github.com/jlowin/fastmcp) for easy MCP server development
+- Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 - Uses the [Seafile Web API](https://download.seafile.com/published/web-api/home.md)
