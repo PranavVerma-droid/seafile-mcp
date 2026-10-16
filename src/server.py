@@ -18,19 +18,25 @@ import argparse
 import logging
 import os
 
+import anyio
 import httpx
 from dotenv import load_dotenv
-from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver import Context, Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+from file_readers import UnsupportedFileError, detect_kind, read_image, read_pdf, read_text
 
 # Load environment variables
 load_dotenv()
 
 SEAFILE_URL = os.getenv("SEAFILE_URL", "").rstrip("/")
 SEAFILE_TOKEN = os.getenv("SEAFILE_TOKEN", "")
+
+# Largest file get_file_content will download (in hosted mode this is held in server memory)
+MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "20"))
 
 logger = logging.getLogger("seafile-mcp")
 
@@ -344,28 +350,63 @@ async def get_file_download_link(ctx: Context, library_id: str, path: str) -> st
 
 
 @mcp.tool()
-async def get_file_content(ctx: Context, library_id: str, path: str) -> str:
-    """Get the content of a text file.
+async def get_file_content(
+    ctx: Context, library_id: str, path: str, page_start: int = 1, max_pages: int = 20
+) -> list[str | Image]:
+    """Read a file. Handles text files, PDFs and images.
+
+    - Text files are returned as text.
+    - PDFs return the text of each page. Scanned pages without a text layer
+      are returned as images. Long PDFs are read in chunks: use page_start
+      and max_pages to page through them.
+    - Images (PNG, JPEG, GIF, WebP, BMP, TIFF) are returned as images, so you
+      can read text, receipts, tables or handwriting in them directly.
 
     Args:
         library_id: The ID of the library
         path: Path to the file
+        page_start: PDFs only. First page to read, starting at 1 (default: 1)
+        max_pages: PDFs only. Maximum number of pages to read (default: 20)
     """
     # First get the download link
     link_response = await seafile_request(
         ctx, "GET", f"/api2/repos/{library_id}/file/", params={"p": path}
     )
     if link_response.status_code != 200:
-        return f"Error getting download link: {error_message(link_response)}"
+        return [f"Error getting download link: {error_message(link_response)}"]
 
     download_url = link_response.text.strip('"')
+    max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
 
-    # Download the content
+    # Stream the download so oversized files are rejected without loading them fully
     async with httpx.AsyncClient() as client:
-        content_response = await client.get(download_url, timeout=30.0)
-    if content_response.status_code == 200:
-        return content_response.text
-    return f"Error downloading file: {content_response.status_code}"
+        async with client.stream("GET", download_url, timeout=60.0) as response:
+            if response.status_code != 200:
+                return [f"Error downloading file: {response.status_code}"]
+            too_big = [
+                f"File is larger than the {MAX_FILE_SIZE_MB} MB limit. "
+                "Use get_file_download_link to download it instead."
+            ]
+            if int(response.headers.get("content-length", 0)) > max_bytes:
+                return too_big
+            data = bytearray()
+            async for chunk in response.aiter_bytes():
+                data.extend(chunk)
+                if len(data) > max_bytes:
+                    return too_big
+    data = bytes(data)
+
+    # Parsing and rendering are CPU-bound; keep them off the event loop
+    try:
+        match detect_kind(path, data):
+            case "pdf":
+                return await anyio.to_thread.run_sync(read_pdf, data, page_start, max_pages)
+            case "image":
+                return [await anyio.to_thread.run_sync(read_image, data)]
+            case _:
+                return [read_text(data)]
+    except UnsupportedFileError as e:
+        return [f"Error: {e}"]
 
 
 @mcp.tool()

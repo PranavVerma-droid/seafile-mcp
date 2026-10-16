@@ -66,6 +66,8 @@ This project depends on:
 - `mcp` - Model Context Protocol library
 - `httpx` - HTTP client
 - `python-dotenv` - Environment variable loading
+- `pypdf`, `pypdfium2` - PDF text extraction and page rendering
+- `pillow` - Image decoding and resizing
 
 Keep dependencies updated to receive security patches:
 

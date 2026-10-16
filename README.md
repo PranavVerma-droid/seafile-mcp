@@ -68,7 +68,7 @@ Once set up, you can ask Claude things like:
 |---------|-------------|
 | **Browse Libraries** | List all libraries, view library details |
 | **Navigate Folders** | List directory contents at any path |
-| **Read Files** | Read text file contents directly |
+| **Read Files** | Read text files, PDFs (including scanned ones) and images directly |
 | **File Operations** | Create, rename, move, copy, delete files and folders |
 | **Download Links** | Generate download links for any file |
 | **Upload Links** | Get upload links for directories |
@@ -320,6 +320,8 @@ claude mcp add --transport http seafile https://files-mcp.example.com/mcp \
 | `MCP_HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Bind address. Also `--host`. Not used by Compose |
 | `MCP_PORT` | `8000` | Port. Also `--port`. With Compose, the port published on the host |
 | `MCP_ALLOWED_HOSTS` | | Comma-separated public hostnames. Enables Host/Origin checks (DNS rebinding protection). Recommended in production |
+| `MAX_FILE_SIZE_MB` | `20` | Largest file `get_file_content` will download. Files are held in memory while being read |
+| `MAX_TEXT_CHARS` | `100000` | Most text `get_file_content` returns in one call; longer content is truncated with a note |
 
 ---
 
@@ -342,10 +344,21 @@ Once connected, Claude has access to these tools:
 | `rename_item` | Rename a file or folder |
 | `move_item` | Move a file or folder |
 | `copy_item` | Copy a file or folder |
-| `get_file_content` | Read a text file's contents |
+| `get_file_content` | Read a file: text, PDF (paged with `page_start` / `max_pages`) or image |
 | `get_file_download_link` | Get a download URL for a file |
 | `get_upload_link` | Get an upload URL for a folder |
 | `search_files` | Search for files (requires search enabled on server) |
+
+### How file reading works
+
+`get_file_content` picks a format based on the file:
+
+- **Text files** (`.txt`, `.md`, `.csv`, code, ...) are returned as text.
+- **PDFs** return the text of each page, 20 pages at a time by default. Ask for later pages with `page_start`. Pages with no text layer (scans) are rendered and sent as images, up to 5 per call.
+- **Images** (PNG, JPEG, GIF, WebP, BMP, TIFF) are downscaled to at most 1568px on the longest side and sent as images. Claude reads text, tables and handwriting in them directly.
+- **Other binary files** (ZIP, Office documents, video, ...) aren't read. Use `get_file_download_link` instead.
+
+Files over `MAX_FILE_SIZE_MB` (default 20 MB) are rejected without being fully downloaded.
 
 ---
 
@@ -407,8 +420,8 @@ Features planned for future releases:
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **PDF reading** | Planned | Extract text from PDF files so Claude can answer questions about receipts, contracts, etc. |
-| **Image OCR** | Idea | Extract text from images using OCR |
+| **PDF reading** | Done | Extract text from PDF files so Claude can answer questions about receipts, contracts, etc. |
+| **Image reading** | Done | Images and scanned PDF pages are sent to Claude as images, so it reads them with vision instead of OCR |
 | **File upload** | Idea | Upload files to Seafile via Claude |
 
 Have a feature request? [Open an issue](https://github.com/setugk/seafile-mcp/issues)!
