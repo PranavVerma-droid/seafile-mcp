@@ -15,8 +15,11 @@ Repository: https://github.com/setugk/seafile-mcp
 """
 
 import argparse
+import base64
+import binascii
 import logging
 import os
+import posixpath
 
 import anyio
 import httpx
@@ -410,8 +413,86 @@ async def get_file_content(
 
 
 @mcp.tool()
+async def upload_file(
+    ctx: Context,
+    library_id: str,
+    path: str,
+    content: str,
+    encoding: str = "text",
+    overwrite: bool = False,
+) -> str:
+    """Upload a file to a library, or replace an existing one.
+
+    Use this to save notes, documents, CSVs, code or other files you write.
+    The parent directory must already exist (see create_directory).
+
+    Args:
+        library_id: The ID of the library
+        path: Full path of the file to create, including its name (e.g. "/Notes/todo.md")
+        content: The file content. Plain text, or base64 if encoding is "base64"
+        encoding: "text" (default, saved as UTF-8) or "base64" for binary files
+        overwrite: Replace the file if it already exists (default: False)
+    """
+    if path.endswith("/"):
+        return "Error: path must include a file name, e.g. /Notes/todo.md"
+    path = "/" + path.lstrip("/")
+    parent_dir, filename = posixpath.split(path)
+    if not filename:
+        return "Error: path must include a file name, e.g. /Notes/todo.md"
+
+    if encoding == "text":
+        data = content.encode("utf-8")
+    elif encoding == "base64":
+        try:
+            data = base64.b64decode(content, validate=True)
+        except (binascii.Error, ValueError):
+            return "Error: content is not valid base64"
+    else:
+        return 'Error: encoding must be "text" or "base64"'
+
+    if len(data) > MAX_FILE_SIZE_MB * 1024 * 1024:
+        return f"Error: file is larger than the {MAX_FILE_SIZE_MB} MB limit"
+
+    # Seafile silently renames uploads that clash with an existing file
+    # ("todo (1).md"), so check first and only replace when asked to.
+    detail = await seafile_request(
+        ctx, "GET", f"/api2/repos/{library_id}/file/detail/", params={"p": path}
+    )
+    exists = detail.status_code == 200
+    if exists and not overwrite:
+        return f"Error: '{path}' already exists. Call again with overwrite=True to replace it."
+    if detail.status_code not in (200, 404):
+        return f"Error checking for an existing file: {error_message(detail)}"
+
+    link_response = await seafile_request(
+        ctx, "GET", f"/api2/repos/{library_id}/upload-link/", params={"p": parent_dir}
+    )
+    if link_response.status_code != 200:
+        return f"Error getting upload link: {error_message(link_response)}"
+    upload_url = link_response.text.strip('"')
+
+    form = {"parent_dir": parent_dir}
+    if exists:
+        form["replace"] = "1"
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            upload_url,
+            params={"ret-json": "1"},
+            data=form,
+            files={"file": (filename, data)},
+            timeout=120.0,
+        )
+    if response.status_code != 200:
+        return f"Error uploading file: Status {response.status_code}: {response.text}"
+
+    action = "Replaced" if exists else "Uploaded"
+    return f"{action} '{path}' ({len(data)} bytes)"
+
+
+@mcp.tool()
 async def get_upload_link(ctx: Context, library_id: str, path: str = "/") -> str:
-    """Get an upload link for a directory. Use this to upload files.
+    """Get an upload link for a directory, for a person to upload files with
+    (e.g. via curl or a script). To upload a file yourself, use upload_file.
 
     Args:
         library_id: The ID of the library

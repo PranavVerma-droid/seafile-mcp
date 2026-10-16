@@ -71,7 +71,8 @@ Once set up, you can ask Claude things like:
 | **Read Files** | Read text files, PDFs (including scanned ones) and images directly |
 | **File Operations** | Create, rename, move, copy, delete files and folders |
 | **Download Links** | Generate download links for any file |
-| **Upload Links** | Get upload links for directories |
+| **Upload Files** | Save files Claude writes (notes, CSVs, code, ...) to Seafile, or replace existing ones |
+| **Upload Links** | Get upload links for directories, for uploading large files yourself |
 | **Search** | Search for files across libraries (if enabled on your server) |
 
 ---
@@ -320,7 +321,7 @@ claude mcp add --transport http seafile https://files-mcp.example.com/mcp \
 | `MCP_HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Bind address. Also `--host`. Not used by Compose |
 | `MCP_PORT` | `8000` | Port. Also `--port`. With Compose, the port published on the host |
 | `MCP_ALLOWED_HOSTS` | | Comma-separated public hostnames. Enables Host/Origin checks (DNS rebinding protection). Recommended in production |
-| `MAX_FILE_SIZE_MB` | `20` | Largest file `get_file_content` will download. Files are held in memory while being read |
+| `MAX_FILE_SIZE_MB` | `20` | Largest file `get_file_content` will download or `upload_file` will upload. Files are held in memory while being processed |
 | `MAX_TEXT_CHARS` | `100000` | Most text `get_file_content` returns in one call; longer content is truncated with a note |
 
 ---
@@ -346,7 +347,8 @@ Once connected, Claude has access to these tools:
 | `copy_item` | Copy a file or folder |
 | `get_file_content` | Read a file: text, PDF (paged with `page_start` / `max_pages`) or image |
 | `get_file_download_link` | Get a download URL for a file |
-| `get_upload_link` | Get an upload URL for a folder |
+| `upload_file` | Upload a file, or replace one with `overwrite=True` |
+| `get_upload_link` | Get an upload URL for a folder (for uploading large files yourself) |
 | `search_files` | Search for files (requires search enabled on server) |
 
 ### How file reading works
@@ -359,6 +361,16 @@ Once connected, Claude has access to these tools:
 - **Other binary files** (ZIP, Office documents, video, ...) aren't read. Use `get_file_download_link` instead.
 
 Files over `MAX_FILE_SIZE_MB` (default 20 MB) are rejected without being fully downloaded.
+
+### How uploading works
+
+`upload_file` takes the full file path (e.g. `/Notes/todo.md`) and the content:
+
+- **Text** is saved as UTF-8. Binary files can be sent base64-encoded with `encoding="base64"`.
+- **Existing files are never replaced by accident.** If the file exists, the upload is refused unless `overwrite=True`, which also lets Claude edit a file: read it, change it, write it back.
+- **The folder must already exist.** Claude can create it first with `create_directory`.
+
+The content passes through the conversation, so this suits files Claude writes or edits. For large files from your computer, use `get_upload_link` and upload them yourself.
 
 ---
 
@@ -422,7 +434,7 @@ Features planned for future releases:
 |---------|--------|-------------|
 | **PDF reading** | Done | Extract text from PDF files so Claude can answer questions about receipts, contracts, etc. |
 | **Image reading** | Done | Images and scanned PDF pages are sent to Claude as images, so it reads them with vision instead of OCR |
-| **File upload** | Idea | Upload files to Seafile via Claude |
+| **File upload** | Done | Upload files to Seafile via Claude |
 
 Have a feature request? [Open an issue](https://github.com/setugk/seafile-mcp/issues)!
 
@@ -452,7 +464,7 @@ When using this MCP server:
 
 The MCP server allows Claude to:
 - Browse, read, and search files
-- Create, rename, move, copy, and **delete** files/folders
+- Create, upload, overwrite, rename, move, copy, and **delete** files/folders
 
 **Be careful with destructive commands.** Consider using a read-only API token if your Seafile server supports scoped permissions.
 
