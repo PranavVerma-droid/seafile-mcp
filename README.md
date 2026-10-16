@@ -120,6 +120,22 @@ The response will look like:
 
 Copy the token value (without quotes).
 
+**Using two-factor authentication?** The request above fails with:
+
+```json
+{"non_field_errors":["Two factor auth token is missing."]}
+```
+
+Send the current 6-digit code from your authenticator app in the `X-SEAFILE-OTP` header:
+
+```bash
+curl -d "username=YOUR_EMAIL&password=YOUR_PASSWORD" \
+     -H "X-SEAFILE-OTP: 123456" \
+     https://YOUR_SEAFILE_SERVER/api2/auth-token/
+```
+
+The code expires within about 30 seconds, so run the command right after reading it. Alternatively, use Option A (the web interface), which works with 2FA without any extra steps.
+
 ---
 
 ## Option A: Local Mode (stdio)
@@ -209,6 +225,8 @@ SEAFILE_URL=https://files.example.com
 MCP_ALLOWED_HOSTS=files-mcp.example.com
 ```
 
+To publish on a different host port, add `MCP_PORT=9001` (for example). With Compose, `MCP_PORT` only changes the host side of the mapping (`127.0.0.1:MCP_PORT → container :8000`).
+
 Start it:
 
 ```bash
@@ -216,7 +234,9 @@ docker compose up -d --build
 curl http://127.0.0.1:8000/health    # {"status":"ok"}
 ```
 
-The container listens on `127.0.0.1:8000`, so it is only reachable through your reverse proxy. For example, with Caddy:
+The container listens on `127.0.0.1:8000`, so it is only reachable through your reverse proxy. The proxy **must pass the original `Host` header**, or `MCP_ALLOWED_HOSTS` rejects requests with `421 Invalid Host header`.
+
+**Caddy** (passes `Host` and handles HTTPS automatically):
 
 ```
 files-mcp.example.com {
@@ -224,7 +244,41 @@ files-mcp.example.com {
 }
 ```
 
+**nginx** (by default it sends `127.0.0.1:8000` as the host, so set it explicitly):
+
+```nginx
+server {
+    server_name files-mcp.example.com;
+    # ... your ssl / certbot lines ...
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;          # required, or you get 421
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;                  # MCP streams responses (SSE)
+        proxy_read_timeout 300s;
+    }
+}
+```
+
 The MCP endpoint is then `https://files-mcp.example.com/mcp`.
+
+### Verify
+
+```bash
+# Through the proxy
+curl https://files-mcp.example.com/health
+
+# A real tool call with your token (should say "Authentication successful")
+curl -s https://files-mcp.example.com/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer YOUR_SEAFILE_TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ping_server","arguments":{}}}'
+```
+
+To call `/mcp` directly on `127.0.0.1` (bypassing the proxy), add `-H "Host: files-mcp.example.com"`.
 
 **Without Compose:**
 
@@ -263,8 +317,8 @@ claude mcp add --transport http seafile https://files-mcp.example.com/mcp \
 | `SEAFILE_URL` | *(required)* | Your Seafile server URL, no trailing slash |
 | `SEAFILE_TOKEN` | | Local mode only. **Ignored in hosted mode.** |
 | `MCP_TRANSPORT` | `stdio` (`http` in Docker) | `stdio` or `http`. Also `--transport` |
-| `MCP_HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Bind address. Also `--host` |
-| `MCP_PORT` | `8000` | Port. Also `--port` |
+| `MCP_HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Bind address. Also `--host`. Not used by Compose |
+| `MCP_PORT` | `8000` | Port. Also `--port`. With Compose, the port published on the host |
 | `MCP_ALLOWED_HOSTS` | | Comma-separated public hostnames. Enables Host/Origin checks (DNS rebinding protection). Recommended in production |
 
 ---
