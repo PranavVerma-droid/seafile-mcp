@@ -20,6 +20,7 @@ import binascii
 import logging
 import os
 import posixpath
+from datetime import datetime
 
 import anyio
 import httpx
@@ -91,6 +92,7 @@ async def seafile_request(
     *,
     params: dict | None = None,
     data: dict | None = None,
+    json: dict | None = None,
     timeout: float = 10.0,
 ) -> httpx.Response:
     """Make an authenticated request to the Seafile API."""
@@ -103,6 +105,7 @@ async def seafile_request(
             headers=get_headers(ctx),
             params=params,
             data=data,
+            json=json,
             timeout=timeout,
         )
 
@@ -503,6 +506,151 @@ async def get_upload_link(ctx: Context, library_id: str, path: str = "/") -> str
     )
     if response.status_code == 200:
         return response.text.strip('"')
+    return f"Error: {error_message(response)}"
+
+
+# The permission choices offered by Seafile's "Generate Link" dialog
+SHARE_LINK_PERMISSIONS = {
+    "preview_download": {"can_edit": False, "can_download": True, "can_upload": False},
+    "preview_only": {"can_edit": False, "can_download": False, "can_upload": False},
+    "download_upload": {"can_edit": False, "can_download": True, "can_upload": True},
+}
+
+
+def share_link_permission(permissions: dict) -> str:
+    """Name the permission of a share link from its Seafile permissions dict."""
+    if permissions.get("can_edit"):
+        return "edit"
+    if permissions.get("can_upload"):
+        return "download_upload"
+    if permissions.get("can_download", True):
+        return "preview_download"
+    return "preview_only"
+
+
+def format_share_link(link: dict) -> dict:
+    """Simplify a share link returned by the Seafile API."""
+    return {
+        "link": link.get("link"),
+        "token": link.get("token"),
+        "library_id": link.get("repo_id"),
+        "library_name": link.get("repo_name"),
+        "path": link.get("path"),
+        "is_dir": link.get("is_dir"),
+        "permission": share_link_permission(link.get("permissions") or {}),
+        # Older Seafile versions don't report the password, so this can be unknown
+        "password_protected": bool(link["password"]) if "password" in link else None,
+        "expires": link.get("expire_date") or None,
+        "is_expired": link.get("is_expired"),
+        "views": link.get("view_cnt"),
+        "created": link.get("ctime"),
+    }
+
+
+@mcp.tool()
+async def list_share_links(ctx: Context, library_id: str = "", path: str = "") -> list:
+    """List existing share links (public links anyone with the URL can open).
+
+    With no arguments, lists all of your share links. Give library_id to list
+    the links in one library, and also path to list the links for one file or
+    folder.
+
+    Args:
+        library_id: Optional library ID to limit the results to
+        path: Optional path of a file or folder (requires library_id)
+    """
+    if path and not library_id:
+        return [{"error": "path requires library_id"}]
+    params = {}
+    if library_id:
+        params["repo_id"] = library_id
+    if path:
+        params["path"] = path
+
+    response = await seafile_request(ctx, "GET", "/api/v2.1/share-links/", params=params)
+    if response.status_code == 200:
+        return [format_share_link(link) for link in response.json()]
+    return [{"error": error_message(response)}]
+
+
+@mcp.tool()
+async def create_share_link(
+    ctx: Context,
+    library_id: str,
+    path: str,
+    permission: str = "preview_download",
+    password: str = "",
+    expire_days: int = 0,
+    expiration_date: str = "",
+) -> dict:
+    """Create a share link for a file or folder and return its URL.
+
+    Anyone with the link can open it, so add a password or expiry for
+    anything sensitive. Check list_share_links first if an existing link
+    would do.
+
+    Args:
+        library_id: The ID of the library
+        path: Path to the file or folder to share
+        permission: "preview_download" (default), "preview_only", or
+            "download_upload" (folders only: visitors can also upload)
+        password: Optional password visitors must enter. Seafile requires a
+            minimum length (8 characters by default)
+        expire_days: Optional number of days until the link expires
+        expiration_date: Optional expiry as an ISO date or datetime
+            (e.g. "2026-12-31" or "2026-12-31T18:00:00+05:30"). Use either
+            this or expire_days, not both
+    """
+    if permission not in SHARE_LINK_PERMISSIONS:
+        return {"error": f"permission must be one of: {', '.join(SHARE_LINK_PERMISSIONS)}"}
+    if expire_days and expiration_date:
+        return {"error": "Use either expire_days or expiration_date, not both"}
+    if expire_days < 0:
+        return {"error": "expire_days must be a positive number of days"}
+
+    body = {
+        "repo_id": library_id,
+        "path": path,
+        "permissions": SHARE_LINK_PERMISSIONS[permission],
+    }
+    if password:
+        body["password"] = password
+    if expire_days:
+        body["expire_days"] = expire_days
+    if expiration_date:
+        try:
+            datetime.fromisoformat(expiration_date)
+        except ValueError:
+            return {"error": 'expiration_date must be an ISO date like "2026-12-31"'}
+        body["expiration_time"] = expiration_date
+
+    response = await seafile_request(ctx, "POST", "/api/v2.1/share-links/", json=body)
+    if response.status_code not in (200, 201):
+        return {"error": error_message(response)}
+
+    result = format_share_link(response.json())
+    if password:
+        result["password"] = password
+        result["password_protected"] = True
+    if (expire_days or expiration_date) and not result["expires"]:
+        # Older Seafile versions ignore expiration_time instead of rejecting it
+        result["warning"] = "Seafile created the link without an expiry. Delete it or use expire_days."
+    return result
+
+
+@mcp.tool()
+async def delete_share_link(ctx: Context, token: str) -> str:
+    """Delete a share link, so its URL stops working.
+
+    Args:
+        token: The link's token (from list_share_links), or the full link URL
+    """
+    token = token.strip().rstrip("/").rsplit("/", 1)[-1]
+    if not token:
+        return "Error: token is required"
+    response = await seafile_request(ctx, "DELETE", f"/api/v2.1/share-links/{token}/")
+    if response.status_code in (200, 204):
+        return f"Share link {token} deleted"
     return f"Error: {error_message(response)}"
 
 

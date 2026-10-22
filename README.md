@@ -62,6 +62,11 @@ Once set up, you can ask Claude things like:
 - "Which folders were modified this month?"
 - "Do I have a copy of my lease agreement?"
 
+**Sharing**
+- "Make a share link for my HKU folder that expires in 7 days"
+- "Share the lease PDF with a password, preview only"
+- "What share links do I have open right now?"
+
 ## Features
 
 | Feature | Description |
@@ -71,6 +76,7 @@ Once set up, you can ask Claude things like:
 | **Read Files** | Read text files, PDFs (including scanned ones) and images directly |
 | **File Operations** | Create, rename, move, copy, delete files and folders |
 | **Download Links** | Generate download links for any file |
+| **Share Links** | List, create and delete public share links, with optional password and expiry |
 | **Upload Files** | Save files Claude writes (notes, CSVs, code, ...) to Seafile, or replace existing ones |
 | **Upload Links** | Get upload links for directories, for uploading large files yourself |
 | **Search** | Search for files across libraries (if enabled on your server) |
@@ -349,6 +355,9 @@ Once connected, Claude has access to these tools:
 | `get_file_download_link` | Get a download URL for a file |
 | `upload_file` | Upload a file, or replace one with `overwrite=True` |
 | `get_upload_link` | Get an upload URL for a folder (for uploading large files yourself) |
+| `list_share_links` | List your share links, for everything, one library, or one file/folder |
+| `create_share_link` | Create a share link, with optional permission, password and expiry |
+| `delete_share_link` | Delete a share link so its URL stops working |
 | `search_files` | Search for files (requires search enabled on server) |
 
 ### How file reading works
@@ -371,6 +380,15 @@ Files over `MAX_FILE_SIZE_MB` (default 20 MB) are rejected without being fully d
 - **The folder must already exist.** Claude can create it first with `create_directory`.
 
 The content passes through the conversation, so this suits files Claude writes or edits. For large files from your computer, use `get_upload_link` and upload them yourself.
+
+### How share links work
+
+Share links are the same links as **Share → Share Link** in the Seafile web interface. Anyone with the URL can open them, without a Seafile account.
+
+- **Permission:** `preview_download` (default), `preview_only`, or `download_upload` (folders only; visitors can also upload).
+- **Password:** optional. Seafile enforces a minimum length (8 characters by default). Claude gets the password back with the new link so it can tell you, but `list_share_links` only shows whether a link has one.
+- **Expiry:** `expire_days` (e.g. `7`) or `expiration_date` (e.g. `2026-12-31`). Your server's share link settings may limit the allowed range. Very old Seafile versions ignore `expiration_date`; Claude gets a warning if a link was created without the expiry it asked for.
+- `delete_share_link` takes the token from `list_share_links` or the full link URL.
 
 ---
 
@@ -435,6 +453,7 @@ Features planned for future releases:
 | **PDF reading** | Done | Extract text from PDF files so Claude can answer questions about receipts, contracts, etc. |
 | **Image reading** | Done | Images and scanned PDF pages are sent to Claude as images, so it reads them with vision instead of OCR |
 | **File upload** | Done | Upload files to Seafile via Claude |
+| **Share links** | Done | Create, list and delete share links with password protection and expiry |
 
 Have a feature request? [Open an issue](https://github.com/setugk/seafile-mcp/issues)!
 
@@ -465,6 +484,7 @@ When using this MCP server:
 The MCP server allows Claude to:
 - Browse, read, and search files
 - Create, upload, overwrite, rename, move, copy, and **delete** files/folders
+- Create and delete **public share links**, which let anyone with the URL open a file or folder
 
 **Be careful with destructive commands.** Consider using a read-only API token if your Seafile server supports scoped permissions.
 
